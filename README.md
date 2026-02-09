@@ -1,50 +1,70 @@
 # Wordle RL Environment
 
-High-fidelity, RL-ready Wordle environment for training modern agents.
+High-fidelity Wordle environment for reinforcement learning with full-scale default lexicons and training-ready observations.
 
-## Features
-- Exact Wordle feedback semantics:
-  - `GREEN`: right letter, right position.
-  - `YELLOW`: right letter, wrong position.
-  - `GREY`: letter not present (after duplicate accounting).
-- Correct duplicate-letter handling (Wordle two-pass scoring logic).
-- Optional hard mode constraints on subsequent guesses.
-- Invalid-guess behavior that does not consume an attempt.
-- Action masking for policy-gradient and masked-action methods.
-- Gymnasium-compatible `reset()` / `step()` interface.
+## What is included
+- Exact Wordle scoring semantics with duplicate-letter correctness.
+- Built-in NYT-scale vocabularies by default:
+  - Answers: 2315
+  - Allowed guesses: 12953
+- Optional hard mode validation.
+- Configurable action masks:
+  - `all`: all guesses are mask-valid.
+  - `hard`: guesses satisfying hard mode hints.
+  - `consistent`: guesses fully consistent with all prior feedback.
+  - `auto`: `hard` if `hard_mode=True`, else `all`.
+- Rich observations for modern policies:
+  - Full board history
+  - Alphabet state
+  - Constraint tensors (`min/max_letter_counts`, `position_mask`)
+  - Remaining candidate-answer count
+  - Optional `action_mask`
+- Candidate tracking API: exact feedback-consistent answer set over all previous guesses.
+
+## Installation
+```bash
+pip install -e .
+```
+
+Optional Gymnasium support:
+```bash
+pip install -e ".[gym]"
+```
 
 ## Quick Start
 ```python
-from wordle_rl import WordleEnv
+from wordle_rl import ActionMaskMode, WordleEnv
 
 env = WordleEnv(
-    answers=["cigar", "rebut", "sissy"],
-    allowed_guesses=["cigar", "rebut", "sissy", "raise", "arise", "stare"],
-    hard_mode=False,
+    hard_mode=True,
+    action_mask_mode=ActionMaskMode.HARD,
 )
 
 obs, info = env.reset(seed=7)
 done = False
 while not done:
-    action = env.action_space.sample() if hasattr(env, "action_space") else 0
+    action = env.sample_valid_action()
     obs, reward, terminated, truncated, info = env.step(action)
     done = terminated or truncated
 ```
 
-## Observation / Action
-- Action: `Discrete(len(allowed_guesses))`
-- Observation dictionary:
-  - `guesses`: `(max_attempts, word_length)` letter indices (`a=0..z=25`, pad=`26`)
-  - `feedback`: `(max_attempts, word_length)` (`GREY=0`, `YELLOW=1`, `GREEN=2`, pad=`3`)
-  - `alphabet_status`: `(26,)` (`0=unknown, 1=absent, 2=present, 3=green`)
-  - `attempts_used`: `(1,)`
-  - `action_mask`: `(num_actions,)` (`1=valid`, `0=invalid`)
+## Observation schema
+- `guesses`: `(max_attempts, word_length)` with `a=0..z=25`, pad=`26`
+- `feedback`: `(max_attempts, word_length)` with `GREY=0`, `YELLOW=1`, `GREEN=2`, pad=`3`
+- `alphabet_status`: `(26,)` (`0=unknown, 1=absent, 2=present, 3=green-seen`)
+- `attempts_used`: `(1,)`
+- `candidate_count`: `(1,)`
+- `min_letter_counts`: `(26,)` (optional)
+- `max_letter_counts`: `(26,)` (optional)
+- `position_mask`: `(word_length, 26)` (optional)
+- `action_mask`: `(num_actions,)` (optional)
 
-## Notes for SOTA Training
-- Use a large, realistic `allowed_guesses` vocabulary.
-- Keep `answers` as the subset of valid target words.
-- Use `action_mask` for masked PPO / A2C / transformer policies to avoid impossible actions.
-- Start with dense rewards, then move to sparse rewards for robust final policies.
+## Core APIs
+- `WordleEnv.score_guess(guess, answer)` for standalone scoring
+- `env.candidate_answers()` for exact remaining solutions
+- `env.word_to_action(word)` / `env.action_to_word(idx)`
+- `env.feedback_for(guess, answer=None)`
+- `load_nyt_lexicon()`, `load_word_list(path)`, `make_lexicon(...)`
 
 ## Tests
 ```bash

@@ -15,3 +15,6 @@ gym = ["gymnasium>=0.29"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["wordle_rl*"]
+
+[tool.setuptools.package-data]
+"wordle_rl.data" = ["*.txt", "*.md"]

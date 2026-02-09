@@ -1,9 +1,22 @@
 import unittest
 
-from wordle_rl import Feedback, RewardConfig, WordleEnv
+from wordle_rl import (
+    ActionMaskMode,
+    Feedback,
+    RewardConfig,
+    WordleEnv,
+    load_nyt_lexicon,
+)
 
 
 class WordleEnvTests(unittest.TestCase):
+    def test_bundled_nyt_lexicon_loaded(self) -> None:
+        lexicon = load_nyt_lexicon()
+        self.assertEqual(len(lexicon.answers), 2315)
+        self.assertEqual(len(lexicon.allowed_guesses), 12953)
+        self.assertIn("cigar", lexicon.answers)
+        self.assertIn("zymic", lexicon.allowed_guesses)
+
     def test_duplicate_letter_scoring_is_exact(self) -> None:
         env = WordleEnv(answers=["apple"], allowed_guesses=["allee", "apple"])
         env.reset(options={"answer": "apple"})
@@ -19,6 +32,22 @@ class WordleEnvTests(unittest.TestCase):
                 int(Feedback.GREEN),
             ],
         )
+
+    def test_constraints_and_candidate_count_update(self) -> None:
+        env = WordleEnv(
+            answers=["apple", "ample", "alien", "angle"],
+            allowed_guesses=["allee", "apple", "ample", "alien", "angle"],
+        )
+        obs, _ = env.reset(options={"answer": "apple"})
+        self.assertEqual(obs["candidate_count"].item(), 4)
+
+        obs2, _, _, _, _ = env.step("allee")
+        l_idx = ord("l") - ord("a")
+        a_idx = ord("a") - ord("a")
+        self.assertEqual(obs2["max_letter_counts"][l_idx], 1)
+        self.assertEqual(obs2["min_letter_counts"][a_idx], 1)
+        self.assertEqual(obs2["candidate_count"].item(), 3)
+        self.assertEqual(env.candidate_answers(), ["apple", "ample", "angle"])
 
     def test_solve_and_terminate(self) -> None:
         env = WordleEnv(
@@ -79,6 +108,40 @@ class WordleEnvTests(unittest.TestCase):
         idx = {w: i for i, w in enumerate(env.allowed_guesses)}
         self.assertEqual(mask[idx["rebut"]], 0)
         self.assertEqual(mask[idx["cigar"]], 1)
+
+    def test_action_mask_consistent_mode(self) -> None:
+        env = WordleEnv(
+            answers=["apple", "ample", "alien", "angle"],
+            allowed_guesses=["allee", "apple", "ample", "alien", "angle", "rebut"],
+            action_mask_mode=ActionMaskMode.CONSISTENT,
+        )
+        env.reset(options={"answer": "apple"})
+        env.step("allee")
+
+        idx = {w: i for i, w in enumerate(env.allowed_guesses)}
+        mask = env.valid_action_mask()
+        self.assertEqual(mask[idx["apple"]], 1)
+        self.assertEqual(mask[idx["ample"]], 1)
+        self.assertEqual(mask[idx["rebut"]], 0)
+        self.assertEqual(mask[idx["angle"]], 1)
+
+    def test_observation_flags_can_remove_optional_keys(self) -> None:
+        env = WordleEnv(
+            answers=["cigar"],
+            allowed_guesses=["cigar"],
+            include_action_mask=False,
+            include_constraints=False,
+        )
+        obs, _ = env.reset(options={"answer": "cigar"})
+        self.assertNotIn("action_mask", obs)
+        self.assertNotIn("position_mask", obs)
+        self.assertNotIn("min_letter_counts", obs)
+        self.assertNotIn("max_letter_counts", obs)
+
+    def test_reset_with_answer_index(self) -> None:
+        env = WordleEnv(answers=["cigar", "rebut"], allowed_guesses=["cigar", "rebut"])
+        env.reset(options={"answer_index": 1})
+        self.assertEqual(env.answer, "rebut")
 
 
 if __name__ == "__main__":
