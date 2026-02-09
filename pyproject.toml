@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wordle-rl"
+version = "0.1.0"
+description = "High-fidelity Wordle environment for reinforcement learning."
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+gym = ["gymnasium>=0.29"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["wordle_rl*"]
