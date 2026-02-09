@@ -76,6 +76,8 @@ env = ActionMaskToInfoWrapper(env)
 flat_env = FlattenWordleObservation(env)
 ```
 
+`gym.make("WordleRL-v0", max_attempts=8, ...)` respects your `max_attempts` setting.
+
 ## Observation schema
 - `guesses`: `(max_attempts, word_length)` with `a=0..z=25`, pad=`26`
 - `feedback`: `(max_attempts, word_length)` with `GREY=0`, `YELLOW=1`, `GREEN=2`, pad=`3`

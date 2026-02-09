@@ -7,7 +7,7 @@ from .vector_env import WordleVectorEnv
 
 try:
     from .wrappers import ActionMaskToInfoWrapper, FlattenWordleObservation
-except Exception:  # pragma: no cover - wrappers need gymnasium
+except ModuleNotFoundError:  # pragma: no cover - wrappers need gymnasium
     ActionMaskToInfoWrapper = None  # type: ignore[assignment]
     FlattenWordleObservation = None  # type: ignore[assignment]
 

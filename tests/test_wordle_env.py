@@ -222,6 +222,18 @@ class WordleEnvTests(unittest.TestCase):
         self.assertEqual(truncated.shape, (3,))
         self.assertEqual(len(infos2), 3)
 
+    def test_vector_env_input_validation(self) -> None:
+        vec = WordleVectorEnv(
+            num_envs=2,
+            answers=["cigar", "rebut"],
+            allowed_guesses=["cigar", "rebut"],
+        )
+        vec.reset(seed=0)
+        with self.assertRaises(TypeError):
+            vec.step("cigar")
+        with self.assertRaises(TypeError):
+            vec.reset(options="not-a-dict")
+
     def test_register_envs_and_make(self) -> None:
         try:
             import gymnasium as gym
@@ -231,6 +243,34 @@ class WordleEnvTests(unittest.TestCase):
         env = gym.make("WordleRL-v0", answers=["cigar"], allowed_guesses=["cigar"])
         obs, info = env.reset(seed=0)
         self.assertIn("guesses", obs)
+        env.close()
+
+    def test_registered_env_respects_custom_max_attempts(self) -> None:
+        try:
+            import gymnasium as gym
+        except ModuleNotFoundError:
+            self.skipTest("gymnasium not installed")
+
+        register_envs(force=True)
+        env = gym.make(
+            "WordleRL-v0",
+            answers=["rebut"],
+            allowed_guesses=["cigar", "rebut"],
+            max_attempts=8,
+            max_invalid_guesses=100,
+        )
+        env.reset(seed=0, options={"answer": "rebut"})
+
+        ended_at = None
+        for idx in range(8):
+            _, _, terminated, truncated, _ = env.step(0)  # always wrong guess: cigar
+            if terminated or truncated:
+                ended_at = idx + 1
+                self.assertTrue(terminated)
+                self.assertFalse(truncated)
+                break
+
+        self.assertEqual(ended_at, 8)
         env.close()
 
     def test_wrappers_work_when_gym_available(self) -> None:

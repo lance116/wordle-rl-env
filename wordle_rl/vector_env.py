@@ -53,6 +53,8 @@ class WordleVectorEnv:
     def step(
         self, actions: Sequence[Union[int, np.integer, str]]
     ) -> Tuple[Dict[str, np.ndarray], np.ndarray, np.ndarray, np.ndarray, List[Dict[str, object]]]:
+        if isinstance(actions, (str, bytes)):
+            raise TypeError("actions must be a sequence with one action per environment.")
         if len(actions) != self.num_envs:
             raise ValueError("actions length must match num_envs.")
 
@@ -95,8 +97,9 @@ class WordleVectorEnv:
     def _normalize_seeds(self, seed: Optional[Union[int, Sequence[Optional[int]]]]) -> List[Optional[int]]:
         if seed is None:
             return [None] * self.num_envs
-        if isinstance(seed, int):
-            return [seed + idx for idx in range(self.num_envs)]
+        if isinstance(seed, (int, np.integer)):
+            base = int(seed)
+            return [base + idx for idx in range(self.num_envs)]
         seeds = list(seed)
         if len(seeds) != self.num_envs:
             raise ValueError("seed sequence length must match num_envs.")
@@ -110,6 +113,8 @@ class WordleVectorEnv:
             return [None] * self.num_envs
         if isinstance(options, dict):
             return [options] * self.num_envs
+        if isinstance(options, (str, bytes)):
+            raise TypeError("options must be a dict or a sequence of per-env option dicts.")
         opts = list(options)
         if len(opts) != self.num_envs:
             raise ValueError("options sequence length must match num_envs.")

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 try:
     import gymnasium as gym
 
@@ -27,5 +25,4 @@ def register_envs(*, force: bool = False) -> None:
     gym.register(
         id=env_id,
         entry_point="wordle_rl.env:WordleEnv",
-        max_episode_steps=6,
     )
