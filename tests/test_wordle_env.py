@@ -290,6 +290,16 @@ class WordleEnvTests(unittest.TestCase):
         flat_obs, _ = flat.reset(seed=0, options={"answer": "cigar"})
         self.assertEqual(len(flat_obs.shape), 1)
 
+    def test_pygame_reason_messages(self) -> None:
+        try:
+            from wordle_rl.pygame_ui import _reason_to_message
+        except ModuleNotFoundError:
+            self.skipTest("pygame UI dependencies unavailable")
+
+        self.assertEqual(_reason_to_message("guess_not_in_allowed_list"), "Not in word list.")
+        self.assertIn("Hard mode", _reason_to_message("hard_mode_missing_green"))
+        self.assertEqual(_reason_to_message("unknown"), "Invalid guess.")
+
 
 if __name__ == "__main__":
     unittest.main()

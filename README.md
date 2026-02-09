@@ -34,6 +34,11 @@ Optional Gymnasium support:
 pip install -e ".[gym]"
 ```
 
+Optional UI support:
+```bash
+pip install -e ".[ui]"
+```
+
 ## Quick Start
 ```python
 from wordle_rl import ActionMaskMode, WordleEnv
@@ -105,4 +110,20 @@ python3 -m unittest discover -s tests -v
 ```bash
 python3 benchmarks/benchmark_env.py
 python3 scripts/perf_guardrail.py
+```
+
+## Pygame UI
+Run the visual game UI:
+```bash
+python3 -m wordle_rl.pygame_ui
+```
+
+or via console script after install:
+```bash
+wordle-rl-ui
+```
+
+Optional flags:
+```bash
+python3 -m wordle_rl.pygame_ui --hard-mode --max-attempts 6 --word-length 5
 ```

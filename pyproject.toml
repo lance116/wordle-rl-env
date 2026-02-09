@@ -11,6 +11,10 @@ dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
 gym = ["gymnasium>=0.29"]
+ui = ["pygame>=2.5"]
+
+[project.scripts]
+wordle-rl-ui = "wordle_rl.pygame_ui:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
