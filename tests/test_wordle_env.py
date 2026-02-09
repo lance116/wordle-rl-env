@@ -1,11 +1,17 @@
 import unittest
 
+import numpy as np
+
 from wordle_rl import (
+    ActionMaskToInfoWrapper,
     ActionMaskMode,
     Feedback,
+    FlattenWordleObservation,
     RewardConfig,
     WordleEnv,
+    WordleVectorEnv,
     load_nyt_lexicon,
+    register_envs,
 )
 
 
@@ -180,6 +186,69 @@ class WordleEnvTests(unittest.TestCase):
 
         env = WordleEnv(answers=["cigar", "rebut"], allowed_guesses=["cigar", "rebut"])
         check_env(env)
+
+    def test_vectorized_batch_scoring_matches_scalar(self) -> None:
+        env = WordleEnv(answers=["apple"], allowed_guesses=["apple"])
+        words = env._encode_words(["apple", "ample", "alien", "angle", "cigar"])
+        guess = env._encode_word("allee")
+        batch = env._score_guess_encoded_batch(guess, words)
+        scalar = np.array(
+            [
+                env._score_guess("allee", "apple"),
+                env._score_guess("allee", "ample"),
+                env._score_guess("allee", "alien"),
+                env._score_guess("allee", "angle"),
+                env._score_guess("allee", "cigar"),
+            ],
+            dtype=np.uint8,
+        )
+        self.assertTrue((batch == scalar).all())
+
+    def test_vector_env_batch_shapes(self) -> None:
+        vec = WordleVectorEnv(
+            num_envs=3,
+            answers=["cigar", "rebut"],
+            allowed_guesses=["cigar", "rebut"],
+            max_invalid_guesses=1,
+        )
+        obs, infos = vec.reset(seed=10)
+        self.assertEqual(len(infos), 3)
+        self.assertEqual(obs["guesses"].shape[0], 3)
+        actions = [0, 1, 0]
+        next_obs, rewards, terminated, truncated, infos2 = vec.step(actions)
+        self.assertEqual(next_obs["feedback"].shape[0], 3)
+        self.assertEqual(rewards.shape, (3,))
+        self.assertEqual(terminated.shape, (3,))
+        self.assertEqual(truncated.shape, (3,))
+        self.assertEqual(len(infos2), 3)
+
+    def test_register_envs_and_make(self) -> None:
+        try:
+            import gymnasium as gym
+        except ModuleNotFoundError:
+            self.skipTest("gymnasium not installed")
+        register_envs(force=True)
+        env = gym.make("WordleRL-v0", answers=["cigar"], allowed_guesses=["cigar"])
+        obs, info = env.reset(seed=0)
+        self.assertIn("guesses", obs)
+        env.close()
+
+    def test_wrappers_work_when_gym_available(self) -> None:
+        if ActionMaskToInfoWrapper is None or FlattenWordleObservation is None:
+            self.skipTest("gymnasium wrappers unavailable")
+        try:
+            import gymnasium as gym
+        except ModuleNotFoundError:
+            self.skipTest("gymnasium not installed")
+
+        base = WordleEnv(answers=["cigar"], allowed_guesses=["cigar"])
+        wrapped = ActionMaskToInfoWrapper(base)
+        obs, info = wrapped.reset(seed=0, options={"answer": "cigar"})
+        self.assertIn("action_mask", info)
+
+        flat = FlattenWordleObservation(WordleEnv(answers=["cigar"], allowed_guesses=["cigar"]))
+        flat_obs, _ = flat.reset(seed=0, options={"answer": "cigar"})
+        self.assertEqual(len(flat_obs.shape), 1)
 
 
 if __name__ == "__main__":

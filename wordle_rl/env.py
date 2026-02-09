@@ -122,8 +122,11 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
 
         self._word_to_action = {word: idx for idx, word in enumerate(self.allowed_guesses)}
         self._rng = Random()
+        self._answers_encoded = self._encode_words(self.answers)
+        self._allowed_encoded = self._encode_words(self.allowed_guesses)
 
         self._answer = ""
+        self._answer_encoded = np.zeros(self.word_length, dtype=np.uint8)
         self._attempts_used = 0
         self._invalid_guesses_used = 0
         self._done = False
@@ -300,6 +303,7 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
         if chosen_answer is None:
             chosen_answer = self.answers[self._rand_index(len(self.answers))]
         self._answer = chosen_answer
+        self._answer_encoded = self._encode_word(self._answer)
         self._attempts_used = 0
         self._invalid_guesses_used = 0
         self._done = False
@@ -362,16 +366,20 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
             return obs, reward, False, truncated, info
 
         row = self._attempts_used
-        feedback = np.array(self._score_guess(guess, self._answer), dtype=np.uint8)
+        guess_encoded = self._encode_word(guess)
+        feedback = self._score_guess_encoded_batch(
+            guess_encoded,
+            self._answer_encoded.reshape(1, -1),
+        )[0]
 
-        self._guesses[row] = self._encode_word(guess)
+        self._guesses[row] = guess_encoded
         self._feedback[row] = feedback
         self._update_alphabet_status(guess, feedback)
         self._update_constraint_state(guess, feedback)
         self._update_hard_mode_state(guess, feedback)
-        self._refresh_candidates_with_latest_feedback(guess, feedback)
+        self._refresh_candidates_with_latest_feedback(guess_encoded, feedback)
         if self._track_consistent_mask:
-            self._refresh_consistent_guess_mask(guess, feedback)
+            self._refresh_consistent_guess_mask(guess_encoded, feedback)
 
         self._attempts_used += 1
 
@@ -556,21 +564,19 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
             if present < total and present < self._max_letter_counts[letter_idx]:
                 self._max_letter_counts[letter_idx] = present
 
-    def _refresh_candidates_with_latest_feedback(self, guess: str, feedback: np.ndarray) -> None:
-        target_feedback = feedback.tolist()
-        for idx, answer in enumerate(self.answers):
-            if self._candidate_answer_mask[idx] == 0:
-                continue
-            if self._score_guess(guess, answer) != target_feedback:
-                self._candidate_answer_mask[idx] = 0
+    def _refresh_candidates_with_latest_feedback(
+        self, guess_encoded: np.ndarray, feedback: np.ndarray
+    ) -> None:
+        batch_feedback = self._score_guess_encoded_batch(guess_encoded, self._answers_encoded)
+        matches = (batch_feedback == feedback.reshape(1, -1)).all(axis=1).astype(np.uint8)
+        self._candidate_answer_mask &= matches
 
-    def _refresh_consistent_guess_mask(self, guess: str, feedback: np.ndarray) -> None:
-        target_feedback = feedback.tolist()
-        for idx, candidate in enumerate(self.allowed_guesses):
-            if self._consistent_guess_mask[idx] == 0:
-                continue
-            if self._score_guess(guess, candidate) != target_feedback:
-                self._consistent_guess_mask[idx] = 0
+    def _refresh_consistent_guess_mask(
+        self, guess_encoded: np.ndarray, feedback: np.ndarray
+    ) -> None:
+        batch_feedback = self._score_guess_encoded_batch(guess_encoded, self._allowed_encoded)
+        matches = (batch_feedback == feedback.reshape(1, -1)).all(axis=1).astype(np.uint8)
+        self._consistent_guess_mask &= matches
 
     def _action_to_guess(self, action: Union[int, np.integer, str]) -> str:
         if isinstance(action, (int, np.integer)):
@@ -615,6 +621,53 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
                 remaining[g] -= 1
 
         return out
+
+    @staticmethod
+    def _encode_words(words: Sequence[str]) -> np.ndarray:
+        if not words:
+            return np.zeros((0, 0), dtype=np.uint8)
+        length = len(words[0])
+        out = np.empty((len(words), length), dtype=np.uint8)
+        for idx, word in enumerate(words):
+            out[idx] = WordleEnv._encode_word(word)
+        return out
+
+    @staticmethod
+    def _score_guess_encoded_batch(guess_encoded: np.ndarray, words_encoded: np.ndarray) -> np.ndarray:
+        """
+        Vectorized Wordle scoring for one guess against many candidate words.
+        Returns shape: (num_words, word_length), uint8 in {0,1,2}.
+        """
+        if words_encoded.ndim != 2:
+            raise ValueError("words_encoded must be a 2D array.")
+
+        num_words, word_length = words_encoded.shape
+        if guess_encoded.shape != (word_length,):
+            raise ValueError("guess_encoded shape mismatch.")
+        if num_words == 0:
+            return np.zeros((0, word_length), dtype=np.uint8)
+
+        feedback = np.zeros((num_words, word_length), dtype=np.uint8)
+        greens = words_encoded == guess_encoded.reshape(1, -1)
+        feedback[greens] = int(Feedback.GREEN)
+
+        row_idx = np.arange(num_words)
+        remaining = np.zeros((num_words, 26), dtype=np.int16)
+        for pos in range(word_length):
+            letters = words_encoded[:, pos]
+            unmatched = (~greens[:, pos]).astype(np.int16)
+            np.add.at(remaining, (row_idx, letters), unmatched)
+
+        for pos in range(word_length):
+            non_green = ~greens[:, pos]
+            if not non_green.any():
+                continue
+            letter = int(guess_encoded[pos])
+            can_yellow = non_green & (remaining[:, letter] > 0)
+            feedback[can_yellow, pos] = int(Feedback.YELLOW)
+            remaining[can_yellow, letter] -= 1
+
+        return feedback
 
     def _update_alphabet_status(self, guess: str, feedback: np.ndarray) -> None:
         for ch, fb in zip(guess, feedback.tolist()):

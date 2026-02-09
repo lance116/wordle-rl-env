@@ -21,6 +21,8 @@ High-fidelity Wordle environment for reinforcement learning with full-scale defa
   - Remaining candidate-answer count
   - Optional `action_mask`
 - Candidate tracking API: exact feedback-consistent answer set over all previous guesses.
+- Lightweight batched vector API via `WordleVectorEnv`.
+- Gymnasium registration + wrappers for easier integration with external trainers.
 
 ## Installation
 ```bash
@@ -50,6 +52,30 @@ while not done:
     done = terminated or truncated
 ```
 
+## Batched collection
+```python
+from wordle_rl import WordleVectorEnv
+
+vec = WordleVectorEnv(num_envs=8, auto_reset=True)
+obs, infos = vec.reset(seed=123)
+
+actions = [env.sample_valid_action() for env in vec.envs]
+obs, rewards, terminated, truncated, infos = vec.step(actions)
+```
+
+## Gymnasium registration and wrappers
+`WordleRL-v0` is auto-registered when `wordle_rl` is imported and Gymnasium is installed.
+
+```python
+import gymnasium as gym
+import wordle_rl
+from wordle_rl import ActionMaskToInfoWrapper, FlattenWordleObservation
+
+env = gym.make("WordleRL-v0")
+env = ActionMaskToInfoWrapper(env)
+flat_env = FlattenWordleObservation(env)
+```
+
 ## Observation schema
 - `guesses`: `(max_attempts, word_length)` with `a=0..z=25`, pad=`26`
 - `feedback`: `(max_attempts, word_length)` with `GREY=0`, `YELLOW=1`, `GREEN=2`, pad=`3`
@@ -71,4 +97,10 @@ while not done:
 ## Tests
 ```bash
 python3 -m unittest discover -s tests -v
+```
+
+## Benchmarks
+```bash
+python3 benchmarks/benchmark_env.py
+python3 scripts/perf_guardrail.py
 ```
