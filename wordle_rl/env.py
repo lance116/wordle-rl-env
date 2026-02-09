@@ -78,6 +78,7 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
         include_action_mask: bool = True,
         action_mask_mode: Union[str, ActionMaskMode] = "auto",
         include_constraints: bool = True,
+        max_invalid_guesses: Optional[int] = None,
         render_mode: Optional[str] = None,
     ) -> None:
         if max_attempts <= 0:
@@ -91,9 +92,18 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
         self.reward_config = reward_config or RewardConfig()
         self.include_action_mask = include_action_mask
         self.include_constraints = include_constraints
+        if max_invalid_guesses is None:
+            self.max_invalid_guesses = self.max_attempts * 2
+        else:
+            if max_invalid_guesses < 0:
+                raise ValueError("max_invalid_guesses must be >= 0")
+            self.max_invalid_guesses = int(max_invalid_guesses)
         self.render_mode = render_mode
+        if self.render_mode not in (None, "ansi"):
+            raise ValueError("render_mode must be one of: None, 'ansi'")
 
         self._action_mask_mode = self._parse_mask_mode(action_mask_mode)
+        self._track_consistent_mask = self._action_mask_mode == ActionMaskMode.CONSISTENT
 
         if answers is None and allowed_guesses is None:
             default_lexicon = load_nyt_lexicon(word_length=self.word_length)
@@ -115,6 +125,7 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
 
         self._answer = ""
         self._attempts_used = 0
+        self._invalid_guesses_used = 0
         self._done = False
 
         self._guesses = np.full((self.max_attempts, self.word_length), fill_value=26, dtype=np.uint8)
@@ -131,9 +142,9 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
         self._hard_banned_positions = np.zeros((self.word_length, 26), dtype=np.uint8)
         self._hard_required_counts = np.zeros(26, dtype=np.uint8)
 
-        self._guess_history: List[str] = []
-        self._feedback_history: List[np.ndarray] = []
         self._candidate_answer_mask = np.ones(len(self.answers), dtype=np.uint8)
+        self._consistent_guess_mask = np.ones(len(self.allowed_guesses), dtype=np.uint8)
+        self._all_action_mask = np.ones(len(self.allowed_guesses), dtype=np.uint8)
 
         if _HAS_GYMNASIUM:
             self.action_space = spaces.Discrete(len(self.allowed_guesses))  # type: ignore[attr-defined]
@@ -205,6 +216,10 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
         return self._attempts_used
 
     @property
+    def invalid_guesses_used(self) -> int:
+        return self._invalid_guesses_used
+
+    @property
     def attempts_left(self) -> int:
         return self.max_attempts - self._attempts_used
 
@@ -248,8 +263,8 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
         mask = self.valid_action_mask()
         valid_indices = np.flatnonzero(mask)
         if valid_indices.size == 0:
-            return int(self._rng.randrange(len(self.allowed_guesses)))
-        return int(valid_indices[self._rng.randrange(valid_indices.size)])
+            return self._rand_index(len(self.allowed_guesses))
+        return int(valid_indices[self._rand_index(valid_indices.size)])
 
     def candidate_answers(self) -> List[str]:
         return [w for w, keep in zip(self.answers, self._candidate_answer_mask) if keep == 1]
@@ -260,6 +275,8 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
         seed: Optional[int] = None,
         options: Optional[Dict[str, Union[str, int]]] = None,
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, object]]:
+        if _HAS_GYMNASIUM:
+            super().reset(seed=seed)
         if seed is not None:
             self._rng.seed(seed)
 
@@ -280,8 +297,11 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
                     raise ValueError("answer_index out of range.")
                 chosen_answer = self.answers[idx]
 
-        self._answer = chosen_answer if chosen_answer is not None else self._rng.choice(self.answers)
+        if chosen_answer is None:
+            chosen_answer = self.answers[self._rand_index(len(self.answers))]
+        self._answer = chosen_answer
         self._attempts_used = 0
+        self._invalid_guesses_used = 0
         self._done = False
 
         self._guesses.fill(26)
@@ -298,9 +318,8 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
         self._hard_banned_positions.fill(0)
         self._hard_required_counts.fill(0)
 
-        self._guess_history.clear()
-        self._feedback_history.clear()
         self._candidate_answer_mask.fill(1)
+        self._consistent_guess_mask.fill(1)
 
         obs = self._build_observation()
         info: Dict[str, object] = {
@@ -322,7 +341,14 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
         guess = self._action_to_guess(action)
         is_valid, reason = self._validate_guess(guess)
         if not is_valid:
+            self._invalid_guesses_used += 1
             reward = float(self.reward_config.invalid_guess_penalty)
+            truncated = (
+                self.max_invalid_guesses > 0
+                and self._invalid_guesses_used >= self.max_invalid_guesses
+            )
+            if truncated:
+                self._done = True
             obs = self._build_observation()
             info = {
                 "guess": guess,
@@ -330,21 +356,22 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
                 "reason": reason,
                 "feedback": None,
                 "candidate_count": self.candidate_count,
+                "invalid_guesses_used": self._invalid_guesses_used,
+                "answer": self._answer if truncated else None,
             }
-            return obs, reward, False, False, info
+            return obs, reward, False, truncated, info
 
         row = self._attempts_used
         feedback = np.array(self._score_guess(guess, self._answer), dtype=np.uint8)
 
         self._guesses[row] = self._encode_word(guess)
         self._feedback[row] = feedback
-        self._guess_history.append(guess)
-        self._feedback_history.append(feedback.copy())
-
         self._update_alphabet_status(guess, feedback)
         self._update_constraint_state(guess, feedback)
         self._update_hard_mode_state(guess, feedback)
-        self._refresh_candidates()
+        self._refresh_candidates_with_latest_feedback(guess, feedback)
+        if self._track_consistent_mask:
+            self._refresh_consistent_guess_mask(guess, feedback)
 
         self._attempts_used += 1
 
@@ -361,6 +388,7 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
             "feedback": feedback.copy(),
             "answer": self._answer if terminated else None,
             "candidate_count": self.candidate_count,
+            "invalid_guesses_used": self._invalid_guesses_used,
         }
         return obs, reward, terminated, False, info
 
@@ -381,7 +409,7 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
         mode = self._effective_mask_mode()
 
         if mode == ActionMaskMode.ALL:
-            return np.ones(len(self.allowed_guesses), dtype=np.uint8)
+            return self._all_action_mask.copy()
 
         mask = np.zeros(len(self.allowed_guesses), dtype=np.uint8)
 
@@ -391,9 +419,7 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
                 mask[idx] = 1 if ok else 0
             return mask
 
-        for idx, word in enumerate(self.allowed_guesses):
-            mask[idx] = 1 if self._is_consistent_with_history(word) else 0
-        return mask
+        return self._consistent_guess_mask.copy()
 
     def _effective_mask_mode(self) -> ActionMaskMode:
         mode = self._action_mask_mode
@@ -405,6 +431,8 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
     def _parse_mask_mode(mode: Union[str, ActionMaskMode]) -> ActionMaskMode:
         if isinstance(mode, ActionMaskMode):
             return mode
+        if not isinstance(mode, str):
+            raise ValueError("action_mask_mode must be one of: auto, all, hard, consistent.")
 
         clean = mode.strip().lower()
         if clean == "all":
@@ -528,20 +556,21 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
             if present < total and present < self._max_letter_counts[letter_idx]:
                 self._max_letter_counts[letter_idx] = present
 
-    def _refresh_candidates(self) -> None:
-        if not self._guess_history:
-            self._candidate_answer_mask.fill(1)
-            return
-
+    def _refresh_candidates_with_latest_feedback(self, guess: str, feedback: np.ndarray) -> None:
+        target_feedback = feedback.tolist()
         for idx, answer in enumerate(self.answers):
-            self._candidate_answer_mask[idx] = 1 if self._is_consistent_with_history(answer) else 0
+            if self._candidate_answer_mask[idx] == 0:
+                continue
+            if self._score_guess(guess, answer) != target_feedback:
+                self._candidate_answer_mask[idx] = 0
 
-    def _is_consistent_with_history(self, candidate_word: str) -> bool:
-        for guess, feedback in zip(self._guess_history, self._feedback_history):
-            scored = self._score_guess(guess, candidate_word)
-            if any(a != b for a, b in zip(scored, feedback.tolist())):
-                return False
-        return True
+    def _refresh_consistent_guess_mask(self, guess: str, feedback: np.ndarray) -> None:
+        target_feedback = feedback.tolist()
+        for idx, candidate in enumerate(self.allowed_guesses):
+            if self._consistent_guess_mask[idx] == 0:
+                continue
+            if self._score_guess(guess, candidate) != target_feedback:
+                self._consistent_guess_mask[idx] = 0
 
     def _action_to_guess(self, action: Union[int, np.integer, str]) -> str:
         if isinstance(action, (int, np.integer)):
@@ -554,6 +583,13 @@ class WordleEnv(gym.Env if _HAS_GYMNASIUM else object):  # type: ignore[misc]
             return validate_word(action, self.word_length)
 
         raise TypeError(f"Unsupported action type: {type(action)!r}")
+
+    def _rand_index(self, upper: int) -> int:
+        if upper <= 0:
+            raise ValueError("upper must be > 0")
+        if _HAS_GYMNASIUM and hasattr(self, "np_random"):
+            return int(self.np_random.integers(upper))  # type: ignore[attr-defined]
+        return int(self._rng.randrange(upper))
 
     @staticmethod
     def _encode_word(word: str) -> np.ndarray:

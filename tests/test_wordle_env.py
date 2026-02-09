@@ -10,6 +10,27 @@ from wordle_rl import (
 
 
 class WordleEnvTests(unittest.TestCase):
+    def test_invalid_guess_budget_truncates_episode(self) -> None:
+        env = WordleEnv(
+            answers=["cigar"],
+            allowed_guesses=["cigar", "cairn", "rebut"],
+            hard_mode=True,
+            max_invalid_guesses=2,
+        )
+        env.reset(options={"answer": "cigar"})
+        env.step("cairn")
+
+        _, _, terminated1, truncated1, info1 = env.step("rebut")
+        self.assertFalse(terminated1)
+        self.assertFalse(truncated1)
+        self.assertEqual(info1["invalid_guesses_used"], 1)
+
+        _, _, terminated2, truncated2, info2 = env.step("rebut")
+        self.assertFalse(terminated2)
+        self.assertTrue(truncated2)
+        self.assertEqual(info2["invalid_guesses_used"], 2)
+        self.assertEqual(info2["answer"], "cigar")
+
     def test_bundled_nyt_lexicon_loaded(self) -> None:
         lexicon = load_nyt_lexicon()
         self.assertEqual(len(lexicon.answers), 2315)
@@ -142,6 +163,23 @@ class WordleEnvTests(unittest.TestCase):
         env = WordleEnv(answers=["cigar", "rebut"], allowed_guesses=["cigar", "rebut"])
         env.reset(options={"answer_index": 1})
         self.assertEqual(env.answer, "rebut")
+
+    def test_seeded_reset_is_deterministic(self) -> None:
+        env = WordleEnv(answers=["cigar", "rebut", "sissy"], allowed_guesses=["cigar", "rebut", "sissy"])
+        env.reset(seed=123)
+        first = env.answer
+        env.reset(seed=123)
+        second = env.answer
+        self.assertEqual(first, second)
+
+    def test_gym_checker_passes_when_available(self) -> None:
+        try:
+            from gymnasium.utils.env_checker import check_env
+        except ModuleNotFoundError:
+            self.skipTest("gymnasium not installed")
+
+        env = WordleEnv(answers=["cigar", "rebut"], allowed_guesses=["cigar", "rebut"])
+        check_env(env)
 
 
 if __name__ == "__main__":

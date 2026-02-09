@@ -8,6 +8,7 @@ High-fidelity Wordle environment for reinforcement learning with full-scale defa
   - Answers: 2315
   - Allowed guesses: 12953
 - Optional hard mode validation.
+- Finite invalid-guess budget (`max_invalid_guesses`, default `2 * max_attempts`) to prevent non-terminating episodes during RL exploration.
 - Configurable action masks:
   - `all`: all guesses are mask-valid.
   - `hard`: guesses satisfying hard mode hints.
@@ -38,6 +39,7 @@ from wordle_rl import ActionMaskMode, WordleEnv
 env = WordleEnv(
     hard_mode=True,
     action_mask_mode=ActionMaskMode.HARD,
+    max_invalid_guesses=12,
 )
 
 obs, info = env.reset(seed=7)
